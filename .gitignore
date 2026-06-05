@@ -1,0 +1,7 @@
+.env
+.venv
+__pycache__/
+irpipe_dataset640(500)/
+rgb_pipe_dataset640(500)/
+unetpp.ipynb
+sample*

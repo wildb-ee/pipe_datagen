@@ -9,14 +9,14 @@ from mathutils import Vector
 # =========================================================================
 # Set this to the folder where you want your dataset saved 
 
-from dotenv import load_dotenv
+#from dotenv import load_dotenv
 
-load_dotenv()
+#load_dotenv()
 
-DATASET_DIR = os.getenv("DATASET_DIR")
+#DATASET_DIR = os.getenv("DATASET_DIR")
 
-
-NUM_SAMPLES = 10       # Number of dataset images to generate
+DATASET_DIR = ""
+NUM_SAMPLES = 20      # Number of dataset images to generate
 RENDER_RESOLUTION = 640 
 
 TUBE_RADIUS = 1.0
@@ -49,10 +49,10 @@ def setup_compositor():
     rl_node = tree.nodes.new('CompositorNodeRLayers')
     rl_node.location = (-400, 0)
     
-    id_mask_node = tree.nodes.new('CompositorNodeIDMask')
-    id_mask_node.location = (0, -150)
-    id_mask_node.inputs['Index'].default_value = MASK_PASS_INDEX
-    id_mask_node.inputs[2].default_value = False
+    # Use Cryptomatte instead of ID Mask for Eevee compatibility
+    crypto_node = tree.nodes.new('CompositorNodeCryptomatteV2')
+    crypto_node.location = (0, -150)
+    crypto_node.matte_id = "HoleSegmentationMask" # Explicitly track the mask material
     
     out_ir = tree.nodes.new('CompositorNodeOutputFile')
     out_ir.directory = os.path.join(DATASET_DIR, "ir_images")
@@ -63,7 +63,7 @@ def setup_compositor():
         out_ir.file_output_items.new('RGBA', "ir_####")
     else:
         out_ir.file_output_items[0].path = "ir_####"
-    out_ir.location = (200, 150)
+    out_ir.location = (300, 150)
     
     out_mask = tree.nodes.new('CompositorNodeOutputFile')
     out_mask.directory = os.path.join(DATASET_DIR, "masks")
@@ -73,12 +73,13 @@ def setup_compositor():
     if len(out_mask.file_output_items) == 0:
         out_mask.file_output_items.new('RGBA', "mask_####")
     else:
-        out_mask.file_output_items[0].name = "mask_####"
-    out_mask.location = (200, -150)
+        out_mask.file_output_items[0].path = "mask_####"
+    out_mask.location = (300, -150)
     
+    # Wiring the compositor
     tree.links.new(rl_node.outputs['Image'], out_ir.inputs[0])
-    tree.links.new(rl_node.outputs['Material Index'], id_mask_node.inputs[0])
-    tree.links.new(id_mask_node.outputs['Alpha'], out_mask.inputs[0])
+    tree.links.new(rl_node.outputs['Image'], crypto_node.inputs['Image'])
+    tree.links.new(crypto_node.outputs['Matte'], out_mask.inputs[0])
 
 # =========================================================================
 # 2. SCENE CLEARING
@@ -338,13 +339,10 @@ def update_camera_and_light():
 
 bpy.context.scene.render.resolution_x = RENDER_RESOLUTION
 bpy.context.scene.render.resolution_y = RENDER_RESOLUTION
-bpy.context.scene.render.engine = 'CYCLES'
-
-bpy.context.scene.cycles.device = 'GPU'
-bpy.context.preferences.addons['cycles'].preferences.compute_device_type = 'CUDA' 
+bpy.context.scene.render.engine = 'BLENDER_EEVEE'
 
 bpy.context.scene.cycles.samples = 32        
-bpy.context.scene.view_layers["ViewLayer"].use_pass_material_index = True
+bpy.context.scene.view_layers["ViewLayer"].use_pass_cryptomatte_material = True
 
 setup_compositor()
 
