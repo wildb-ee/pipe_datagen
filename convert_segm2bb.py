@@ -30,7 +30,7 @@ def mask_to_yolo():
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         base_num = mask_name.split('_')[-1].split('.')[0] 
-        txt_name = f"file_namergb_{base_num}.txt" 
+        txt_name = f"file_nameir_{base_num}.txt" 
         txt_path = os.path.join(LABELS_DIR, txt_name)
         
         with open(txt_path, 'w') as f:

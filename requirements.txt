@@ -1,0 +1,8 @@
+torch
+torchvision
+albumentations
+python-dotenv
+notebook
+matplotlib
+wandb
+tqdm
