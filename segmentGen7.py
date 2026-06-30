@@ -7,7 +7,7 @@ from mathutils import Vector
 # =========================================================================
 # CONFIGURATION VARIABLES FOR DATASET
 # =========================================================================
-DATASET_DIR = "/home/fayaz/smth/arms_lab/pipe_datagen/sample5" # Set this to your desired output folder
+DATASET_DIR = ""
 NUM_SAMPLES = 5      
 RENDER_RESOLUTION = 640 
 
