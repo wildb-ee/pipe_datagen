@@ -29,7 +29,7 @@ HOLE_RADIUS_MAX = 0.24
 MASK_PASS_INDEX = 77            
 
 # Create directories if they don't exist
-os.makedirs(os.path.join(DATASET_DIR, "ir_images"), exist_ok=True)
+os.makedirs(os.path.join(DATASET_DIR, "images"), exist_ok=True)
 os.makedirs(os.path.join(DATASET_DIR, "masks"), exist_ok=True)
 
 # =========================================================================
@@ -55,14 +55,14 @@ def setup_compositor():
     id_mask_node.inputs[2].default_value = False
     
     out_ir = tree.nodes.new('CompositorNodeOutputFile')
-    out_ir.directory = os.path.join(DATASET_DIR, "ir_images")
+    out_ir.directory = os.path.join(DATASET_DIR, "images")
     out_ir.format.media_type = 'IMAGE'
     out_ir.format.color_mode = 'RGB'
     out_ir.format.file_format = 'PNG'
     if len(out_ir.file_output_items) == 0:
-        out_ir.file_output_items.new('RGBA', "ir_####")
+        out_ir.file_output_items.new('RGBA', "image_####")
     else:
-        out_ir.file_output_items[0].path = "ir_####"
+        out_ir.file_output_items[0].path = "image_####"
     out_ir.location = (200, 150)
     
     out_mask = tree.nodes.new('CompositorNodeOutputFile')

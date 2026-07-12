@@ -7,9 +7,9 @@ from mathutils import Vector
 # =========================================================================
 # CONFIGURATION VARIABLES FOR DATASET
 # =========================================================================
-DATASET_DIR = ""
-NUM_SAMPLES = 5      
-RENDER_RESOLUTION = 640 
+DATASET_DIR = "" 
+NUM_SAMPLES = 200    
+RENDER_RESOLUTION = 512 
 
 TUBE_RADIUS = 1.0
 TUBE_DEPTH = 8.0
@@ -22,7 +22,7 @@ MASK_PASS_INDEX = 77
 
 # Create directories if they don't exist
 if DATASET_DIR:
-    os.makedirs(os.path.join(DATASET_DIR, "ir_images"), exist_ok=True)
+    os.makedirs(os.path.join(DATASET_DIR, "images"), exist_ok=True)
     os.makedirs(os.path.join(DATASET_DIR, "masks"), exist_ok=True)
 
 # =========================================================================
@@ -46,34 +46,51 @@ def setup_compositor():
     crypto_node.location = (0, -150)
     crypto_node.matte_id = "HoleSegmentationMask" 
     
+    # --- RGB IMAGE OUTPUT ---
     out_ir = tree.nodes.new('CompositorNodeOutputFile')
     if DATASET_DIR:
-        out_ir.directory = os.path.join(DATASET_DIR, "ir_images")
+        out_ir.directory = os.path.join(DATASET_DIR, "images")
     out_ir.format.media_type = 'IMAGE'
-    out_ir.format.color_mode = 'RGB'
+    out_ir.format.color_mode = 'RGB' 
     out_ir.format.file_format = 'PNG'
     if len(out_ir.file_output_items) == 0:
-        out_ir.file_output_items.new('RGBA', "ir_####")
+        out_ir.file_output_items.new('RGBA', "image_####")
     else:
-        out_ir.file_output_items[0].path = "ir_####"
+        out_ir.file_output_items[0].path = "image_####"
     out_ir.location = (300, 150)
     
+    # --- MASK OUTPUT ---
     out_mask = tree.nodes.new('CompositorNodeOutputFile')
     if DATASET_DIR:
         out_mask.directory = os.path.join(DATASET_DIR, "masks")
     out_mask.format.media_type = 'IMAGE'
-    out_mask.format.color_mode = 'BW' 
+    out_mask.format.color_mode = 'BW'
+    out_mask.format.color_depth = '8' 
     out_mask.format.file_format = 'PNG'
+    
+    out_mask.format.color_management = 'OVERRIDE'
+    out_mask.format.view_settings.view_transform = 'Standard'
+    out_mask.format.view_settings.look = 'None'
+    
     if len(out_mask.file_output_items) == 0:
         out_mask.file_output_items.new('RGBA', "mask_####")
     else:
         out_mask.file_output_items[0].path = "mask_####"
     out_mask.location = (300, -150)
     
+    # --- WIRING ---
     tree.links.new(rl_node.outputs['Image'], out_ir.inputs[0])
     tree.links.new(rl_node.outputs['Image'], crypto_node.inputs['Image'])
-    tree.links.new(crypto_node.outputs['Matte'], out_mask.inputs[0])
-
+    
+    # Convert Cryptomatte output into a strict binary mask
+    math_node = tree.nodes.new('ShaderNodeMath')
+    math_node.operation = 'GREATER_THAN'
+    math_node.inputs[1].default_value = 0.5
+    math_node.location = (150, -150)
+    
+    tree.links.new(crypto_node.outputs['Matte'], math_node.inputs[0])
+    tree.links.new(math_node.outputs['Value'], out_mask.inputs[0])
+    
 # =========================================================================
 # 2. SCENE CLEARING
 # =========================================================================
@@ -90,7 +107,6 @@ def clear_scene():
 # =========================================================================
 def generate_pipe():
     # --- MASTER RANDOMIZATION PARAMETERS ---
-    # 0.0 = Brand new clean pipe, 1.0 = Completely destroyed pipe
     corrosion_degree = random.uniform(0.0, 1.0) 
     
     # --- Materials ---
@@ -343,6 +359,7 @@ def update_camera_and_light():
     camera_object = bpy.data.objects.new("Pipe_Internal_Camera", camera_data)
     bpy.context.scene.collection.objects.link(camera_object)
 
+    # Position the camera inside the tube
     MAX_SAFE_RADIUS = (TUBE_RADIUS - TUBE_THICKNESS) - 0.25  
     cam_angle = random.uniform(0, 2 * math.pi)
     cam_r = random.uniform(0, MAX_SAFE_RADIUS)
@@ -352,18 +369,26 @@ def update_camera_and_light():
 
     camera_object.location = (cam_x, cam_y, cam_z)
 
-    tar_angle = random.uniform(0, 2 * math.pi)
-    tar_r = random.uniform(0, MAX_SAFE_RADIUS)
-    tar_x = tar_r * math.cos(tar_angle)
-    tar_y = tar_r * math.sin(tar_angle)
-    tar_z = random.uniform(-TUBE_DEPTH/2 + 0.5, TUBE_DEPTH/2 - 0.5)
+    # --- NEW WALL-FACING DIRECTION LOGIC ---
+    # 1. Choose a random horizontal angle (0 to 360 degrees) to face a side wall
+    look_angle = random.uniform(0, 2 * math.pi)
+    
+    # 2. Add a very slight vertical tilt (pitch) so it's not perfectly generic,
+    # but keep it low enough that it never looks down to the end holes
+    look_tilt = random.uniform(-0.15, 0.15) 
 
-    cam_pos = Vector((cam_x, cam_y, cam_z))
-    target_pos = Vector((tar_x, tar_y, tar_z))
-    direction = target_pos - cam_pos
+    # 3. Formulate the direction vector pointing outward toward the cylinder wall
+    direction = Vector((
+        math.cos(look_angle),
+        math.sin(look_angle),
+        look_tilt
+    ))
 
+    # Apply the rotation pointing directly at the wall vector
     camera_object.rotation_euler = direction.to_track_quat('-Z', 'Y').to_euler()
-    camera_data.lens = 16
+    
+    # Slightly widen the lens field of view to capture more wall surface up close
+    camera_data.lens = 14 
     bpy.context.scene.camera = camera_object
     
     # --- Internal Lighting Generation ---
@@ -371,7 +396,7 @@ def update_camera_and_light():
     light_data.energy = random.uniform(20, 80)
     light_obj = bpy.data.objects.new(name="InternalLight", object_data=light_data)
     bpy.context.scene.collection.objects.link(light_obj)
-    light_obj.location = camera_object.location 
+    light_obj.location = camera_object.location
 
 # =========================================================================
 # 4. OPTIMIZED EXECUTION LOOP
@@ -380,6 +405,8 @@ def update_camera_and_light():
 bpy.context.scene.render.resolution_x = RENDER_RESOLUTION
 bpy.context.scene.render.resolution_y = RENDER_RESOLUTION
 bpy.context.scene.render.engine = 'BLENDER_EEVEE'
+
+bpy.context.scene.render.dither_intensity = 0.0
 
 bpy.context.scene.cycles.samples = 32        
 bpy.context.scene.view_layers["ViewLayer"].use_pass_cryptomatte_material = True
