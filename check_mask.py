@@ -17,7 +17,7 @@ def check_mask(mask):
     return True
 
 if __name__ == "__main__":
-    masks_dir = Path("sample200/masks")
+    masks_dir = Path("sample5/masks")
 
     mask_files = sorted(masks_dir.glob("*[0-9].png"))
 
