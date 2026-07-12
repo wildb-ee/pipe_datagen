@@ -7,8 +7,8 @@ from mathutils import Vector
 # =========================================================================
 # CONFIGURATION VARIABLES FOR DATASET
 # =========================================================================
-DATASET_DIR = "/home/fayaz/smth/arms_lab/pipe_datagen/sample5" 
-NUM_SAMPLES = 5      
+DATASET_DIR = "" 
+NUM_SAMPLES = 200    
 RENDER_RESOLUTION = 512 
 
 TUBE_RADIUS = 1.0
@@ -405,6 +405,8 @@ def update_camera_and_light():
 bpy.context.scene.render.resolution_x = RENDER_RESOLUTION
 bpy.context.scene.render.resolution_y = RENDER_RESOLUTION
 bpy.context.scene.render.engine = 'BLENDER_EEVEE'
+
+bpy.context.scene.render.dither_intensity = 0.0
 
 bpy.context.scene.cycles.samples = 32        
 bpy.context.scene.view_layers["ViewLayer"].use_pass_cryptomatte_material = True
