@@ -7,8 +7,16 @@ from mathutils import Vector
 # =========================================================================
 # CONFIGURATION VARIABLES FOR DATASET
 # =========================================================================
-DATASET_DIR = "/home/fayaz/smth/arms_lab/pipe_datagen/sample5" # Set this to your desired output folder
-NUM_SAMPLES = 5      
+# Set this to the folder where you want your dataset saved 
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+DATASET_DIR = os.getenv("DATASET_DIR")
+
+
+NUM_SAMPLES = 10       # Number of dataset images to generate
 RENDER_RESOLUTION = 640 
 
 TUBE_RADIUS = 1.0
@@ -21,12 +29,11 @@ HOLE_RADIUS_MAX = 0.24
 MASK_PASS_INDEX = 77            
 
 # Create directories if they don't exist
-if DATASET_DIR:
-    os.makedirs(os.path.join(DATASET_DIR, "ir_images"), exist_ok=True)
-    os.makedirs(os.path.join(DATASET_DIR, "masks"), exist_ok=True)
+os.makedirs(os.path.join(DATASET_DIR, "images"), exist_ok=True)
+os.makedirs(os.path.join(DATASET_DIR, "masks"), exist_ok=True)
 
 # =========================================================================
-# 1. COMPOSITOR SETUP
+# 1. COMPOSITOR SETUP (Extract IR and Mask simultaneously)
 # =========================================================================
 def setup_compositor():
     scene = bpy.context.scene
@@ -42,37 +49,36 @@ def setup_compositor():
     rl_node = tree.nodes.new('CompositorNodeRLayers')
     rl_node.location = (-400, 0)
     
-    crypto_node = tree.nodes.new('CompositorNodeCryptomatteV2')
-    crypto_node.location = (0, -150)
-    crypto_node.matte_id = "HoleSegmentationMask" 
+    id_mask_node = tree.nodes.new('CompositorNodeIDMask')
+    id_mask_node.location = (0, -150)
+    id_mask_node.inputs['Index'].default_value = MASK_PASS_INDEX
+    id_mask_node.inputs[2].default_value = False
     
     out_ir = tree.nodes.new('CompositorNodeOutputFile')
-    if DATASET_DIR:
-        out_ir.directory = os.path.join(DATASET_DIR, "ir_images")
+    out_ir.directory = os.path.join(DATASET_DIR, "images")
     out_ir.format.media_type = 'IMAGE'
     out_ir.format.color_mode = 'RGB'
     out_ir.format.file_format = 'PNG'
     if len(out_ir.file_output_items) == 0:
-        out_ir.file_output_items.new('RGBA', "ir_####")
+        out_ir.file_output_items.new('RGBA', "image_####")
     else:
-        out_ir.file_output_items[0].path = "ir_####"
-    out_ir.location = (300, 150)
+        out_ir.file_output_items[0].path = "image_####"
+    out_ir.location = (200, 150)
     
     out_mask = tree.nodes.new('CompositorNodeOutputFile')
-    if DATASET_DIR:
-        out_mask.directory = os.path.join(DATASET_DIR, "masks")
+    out_mask.directory = os.path.join(DATASET_DIR, "masks")
     out_mask.format.media_type = 'IMAGE'
     out_mask.format.color_mode = 'BW' 
     out_mask.format.file_format = 'PNG'
     if len(out_mask.file_output_items) == 0:
         out_mask.file_output_items.new('RGBA', "mask_####")
     else:
-        out_mask.file_output_items[0].path = "mask_####"
-    out_mask.location = (300, -150)
+        out_mask.file_output_items[0].name = "mask_####"
+    out_mask.location = (200, -150)
     
     tree.links.new(rl_node.outputs['Image'], out_ir.inputs[0])
-    tree.links.new(rl_node.outputs['Image'], crypto_node.inputs['Image'])
-    tree.links.new(crypto_node.outputs['Matte'], out_mask.inputs[0])
+    tree.links.new(rl_node.outputs['Material Index'], id_mask_node.inputs[0])
+    tree.links.new(id_mask_node.outputs['Alpha'], out_mask.inputs[0])
 
 # =========================================================================
 # 2. SCENE CLEARING
@@ -89,10 +95,6 @@ def clear_scene():
 # 3. GENERATION LOGIC
 # =========================================================================
 def generate_pipe():
-    # --- MASTER RANDOMIZATION PARAMETERS ---
-    # 0.0 = Brand new clean pipe, 1.0 = Completely destroyed pipe
-    corrosion_degree = random.uniform(0.0, 1.0) 
-    
     # --- Materials ---
     mat = bpy.data.materials.new(name="ProceduralRealisticRust")
     mat.use_nodes = True
@@ -106,95 +108,62 @@ def generate_pipe():
     # 1. THE MAIN MASK (Where is the rust vs. exposed metal?)
     # -----------------------------------------------------------
     noise_mask = nodes.new(type='ShaderNodeTexNoise')
-    # Vary the size of the rust patches
-    noise_mask.inputs['Scale'].default_value = random.uniform(0.5, 8.0) 
+    noise_mask.inputs['Scale'].default_value = random.uniform(1.5, 3.5)
     noise_mask.inputs['Detail'].default_value = 15.0
-    noise_mask.inputs['Roughness'].default_value = random.uniform(0.5, 0.8)
+    noise_mask.inputs['Roughness'].default_value = 0.65
 
     ramp_mask_sharp = nodes.new(type='ShaderNodeValToRGB')
-    
-    # Map corrosion_degree to the color ramp thresholds
-    if corrosion_degree < 0.05:
-        # Guarantee perfectly clean
-        p1, p2 = 1.1, 1.2 
-    elif corrosion_degree > 0.95:
-        # Guarantee entirely covered in rust
-        p1, p2 = -0.1, 0.0 
-    else:
-        # Interpolate threshold based on degree
-        threshold = 1.0 - ((corrosion_degree - 0.05) / 0.9)
-        p1 = threshold - random.uniform(0.05, 0.15)
-        p2 = threshold + random.uniform(0.05, 0.15)
-        
-    ramp_mask_sharp.color_ramp.elements[0].position = p1
-    ramp_mask_sharp.color_ramp.elements[1].position = p2
+    ramp_mask_sharp.color_ramp.elements[0].position = 0.35
+    ramp_mask_sharp.color_ramp.elements[1].position = 0.65
 
     # -----------------------------------------------------------
-    # 2. COLOR GENERATION (Varying Rust Colors)
+    # 2. COLOR GENERATION 
     # -----------------------------------------------------------
     noise_rust_detail = nodes.new(type='ShaderNodeTexNoise')
-    # Vary the graininess of the rust color
-    noise_rust_detail.inputs['Scale'].default_value = random.uniform(5.0, 25.0) 
+    noise_rust_detail.inputs['Scale'].default_value = 12.0
     noise_rust_detail.inputs['Detail'].default_value = 15.0
 
     ramp_rust_color = nodes.new(type='ShaderNodeValToRGB')
     cr = ramp_rust_color.color_ramp
-    
-    # Randomize rust hues (Deep darks, vibrant oranges, flat browns)
-    color_dark_pit = (random.uniform(0.0, 0.05), random.uniform(0.0, 0.03), random.uniform(0.0, 0.02), 1.0)
-    color_bright = (random.uniform(0.3, 0.6), random.uniform(0.1, 0.25), random.uniform(0.02, 0.08), 1.0)
-    color_mid1 = (random.uniform(0.08, 0.15), random.uniform(0.04, 0.08), random.uniform(0.02, 0.05), 1.0)
-    color_mid2 = (random.uniform(0.15, 0.3), random.uniform(0.08, 0.15), random.uniform(0.03, 0.08), 1.0)
-
     cr.elements[0].position = 0.0
-    cr.elements[0].color = color_dark_pit
+    cr.elements[0].color = (0.04, 0.02, 0.015, 1.0) # Deep, dark oxidized pitting
     cr.elements[1].position = 1.0
-    cr.elements[1].color = color_bright
+    cr.elements[1].color = (0.45, 0.22, 0.05, 1.0)  # Bright orange accent 
     
     el_mid1 = cr.elements.new(0.35)
-    el_mid1.color = color_mid1
+    el_mid1.color = (0.12, 0.06, 0.04, 1.0)         # Desaturated dark brown
     el_mid2 = cr.elements.new(0.65)
-    el_mid2.color = color_mid2
+    el_mid2.color = (0.25, 0.11, 0.05, 1.0)         # Dusty medium brown
 
     mix_base_color = nodes.new(type='ShaderNodeMixRGB')
-    # Randomize base metal color (dark iron to bright steel)
-    base_gray = random.uniform(0.05, 0.3)
-    mix_base_color.inputs[1].default_value = (base_gray, base_gray, base_gray, 1.0)
+    mix_base_color.inputs[1].default_value = (0.08, 0.075, 0.07, 1.0) # Dark charcoal base metal
     
     # -----------------------------------------------------------
     # 3. PHYSICAL PROPERTIES (Roughness & Metallic)
     # -----------------------------------------------------------
     ramp_roughness = nodes.new(type='ShaderNodeValToRGB')
     ramp_roughness.color_ramp.elements[0].position = 0.0
-    # Clean metal roughness varies
-    metal_roughness = random.uniform(0.2, 0.6)
-    ramp_roughness.color_ramp.elements[0].color = (metal_roughness, metal_roughness, metal_roughness, 1.0)  
+    ramp_roughness.color_ramp.elements[0].color = (0.6, 0.6, 0.6, 1.0)  
     ramp_roughness.color_ramp.elements[1].position = 1.0
-    # Rust is always highly rough
     ramp_roughness.color_ramp.elements[1].color = (0.95, 0.95, 0.95, 1.0) 
 
     ramp_metallic = nodes.new(type='ShaderNodeValToRGB')
     ramp_metallic.color_ramp.elements[0].position = 0.0
-    # Clean metal is highly metallic
-    metal_factor = random.uniform(0.6, 1.0)
-    ramp_metallic.color_ramp.elements[0].color = (metal_factor, metal_factor, metal_factor, 1.0) 
+    ramp_metallic.color_ramp.elements[0].color = (0.25, 0.25, 0.25, 1.0) 
     ramp_metallic.color_ramp.elements[1].position = 1.0
-    # Rust is non-metallic
     ramp_metallic.color_ramp.elements[1].color = (0.0, 0.0, 0.0, 1.0)    
 
     # -----------------------------------------------------------
     # 4. BUMP MAPPING (Pitting & Flaking)
     # -----------------------------------------------------------
     voronoi_pit = nodes.new(type='ShaderNodeTexVoronoi')
-    # Vary the frequency of the pits
-    voronoi_pit.inputs['Scale'].default_value = random.uniform(15.0, 80.0)
+    voronoi_pit.inputs['Scale'].default_value = random.uniform(30.0, 50.0)
     
     mix_bump = nodes.new(type='ShaderNodeMixRGB')
     mix_bump.inputs[1].default_value = (0.5, 0.5, 0.5, 1.0) 
     
     bump = nodes.new(type='ShaderNodeBump')
-    # Randomize how aggressive the bump mapping is
-    bump.inputs['Strength'].default_value = random.uniform(0.3, 0.9)
+    bump.inputs['Strength'].default_value = 0.65
     bump.inputs['Distance'].default_value = 0.06
 
     # --- WIRING EVERYTHING TOGETHER ---
@@ -259,25 +228,15 @@ def generate_pipe():
     bpy.ops.object.shade_smooth()
     tube.data.materials.append(mat)
 
-    # --- Organic Hole Cutters (Based on Corrosion Degree) ---
+    # --- Organic Hole Cutters ---
     cutter_collection = bpy.data.collections.new("Organic_Hole_Cutters")
     bpy.context.scene.collection.children.link(cutter_collection)
     
-    # If the pipe is relatively clean, don't generate any holes
-    if corrosion_degree < 0.2:
-        hole_count = 0
-    else:
-        # Scale the number of holes by how severe the corrosion is
-        max_holes = int(80 * corrosion_degree)
-        hole_count = random.randint(int(max_holes * 0.4), max_holes) 
-        
+    hole_count = random.randint(30, 60) 
     for i in range(hole_count):
         z = random.uniform(-TUBE_DEPTH/2 + 0.6, TUBE_DEPTH/2 - 0.6)
         angle = random.uniform(0, 2 * math.pi)
-        
-        # Severe corrosion allows for larger holes
-        h_rad_max_adjusted = HOLE_RADIUS_MAX * (0.5 + (corrosion_degree * 0.5))
-        h_radius = random.uniform(HOLE_RADIUS_MIN, h_rad_max_adjusted)
+        h_radius = random.uniform(HOLE_RADIUS_MIN, HOLE_RADIUS_MAX)
         
         x = TUBE_RADIUS * math.cos(angle)
         y = TUBE_RADIUS * math.sin(angle)
@@ -313,16 +272,16 @@ def generate_pipe():
     cutter_collection.hide_viewport = True
     cutter_collection.hide_render = True
 
-    # Apply Boolean only if there are holes
-    if hole_count > 0:
-        boolean_mod = tube.modifiers.new(name="Cut_Corrosion_Holes", type='BOOLEAN')
-        boolean_mod.operation = 'DIFFERENCE'
-        boolean_mod.operand_type = 'COLLECTION'
-        boolean_mod.collection = cutter_collection
-        boolean_mod.solver = 'MANIFOLD'
-        
-        bpy.context.view_layer.objects.active = tube
-        bpy.ops.object.modifier_apply(modifier="Cut_Corrosion_Holes")
+    # Apply Boolean
+    boolean_mod = tube.modifiers.new(name="Cut_Corrosion_Holes", type='BOOLEAN')
+    boolean_mod.operation = 'DIFFERENCE'
+    boolean_mod.operand_type = 'COLLECTION'
+    boolean_mod.collection = cutter_collection
+    boolean_mod.solver = 'MANIFOLD'
+    
+    # PERFORMANCE OPTIMIZATION: Bake the modifier so it doesn't recalculate every frame
+    bpy.context.view_layer.objects.active = tube
+    bpy.ops.object.modifier_apply(modifier="Cut_Corrosion_Holes")
 
 def update_camera_and_light():
     for name in ["Pipe_Internal_Camera", "InternalLight"]:
@@ -379,10 +338,13 @@ def update_camera_and_light():
 
 bpy.context.scene.render.resolution_x = RENDER_RESOLUTION
 bpy.context.scene.render.resolution_y = RENDER_RESOLUTION
-bpy.context.scene.render.engine = 'BLENDER_EEVEE'
+bpy.context.scene.render.engine = 'CYCLES'
+
+bpy.context.scene.cycles.device = 'GPU'
+bpy.context.preferences.addons['cycles'].preferences.compute_device_type = 'CUDA' 
 
 bpy.context.scene.cycles.samples = 32        
-bpy.context.scene.view_layers["ViewLayer"].use_pass_cryptomatte_material = True
+bpy.context.scene.view_layers["ViewLayer"].use_pass_material_index = True
 
 setup_compositor()
 
@@ -395,7 +357,6 @@ for frame in range(1, NUM_SAMPLES + 1):
     
     update_camera_and_light()
     bpy.context.scene.frame_set(frame)
-    if DATASET_DIR:
-        bpy.ops.render.render(write_still=True)
+    bpy.ops.render.render(write_still=False)
 
 print("Dataset generation complete!")
